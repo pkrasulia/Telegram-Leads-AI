@@ -1,5 +1,5 @@
 # Multi-stage build for Python agent
-FROM python:3.11-slim as base
+FROM python:3.13-slim as base
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -13,16 +13,15 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
     postgresql-client \
+    libleveldb-dev \
+    libleveldb1d \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
 
 # Install Python dependencies
-COPY requirements.txt pyproject.toml* ./
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install ADK CLI globally
-RUN pip install --no-cache-dir google-adk
+COPY requirements.lock pyproject.toml* ./
+RUN pip install --no-cache-dir -r requirements.lock
 
 FROM base as development
 

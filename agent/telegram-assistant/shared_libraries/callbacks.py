@@ -174,28 +174,72 @@ def after_tool(
     return None
 
 def before_agent(callback_context):
-    print(">>> DEBUG: Inspecting _invocation_context")
-
     inv = getattr(callback_context, "_invocation_context", None)
     if not inv:
-        print("No _invocation_context found")
+        logger.debug("before_agent: invocation context is missing")
         return
 
-    try:
-        # Распечатываем атрибуты
-        print("Attributes of _invocation_context:", dir(inv))
+    session_meta: Optional[Dict[str, Any]] = None
 
-        # Пробуем распечатать __dict__, если есть
-        if hasattr(inv, "__dict__"):
-            print("\nDICT DUMP:")
-            print(json.dumps(inv.__dict__, indent=2, ensure_ascii=False, default=str))
+    # 1. Попробуем получить данные напрямую из inv.inputs (если поле существует в текущей версии ADK)
+    raw_inputs = getattr(inv, "inputs", None)
+    if isinstance(raw_inputs, dict):
+        session_meta = raw_inputs.get("sessionMetadata")
 
-        # Иногда нужные данные лежат в inv.inputs
-        if hasattr(inv, "inputs"):
-            print("\nINPUTS:")
-            print(json.dumps(inv.inputs, indent=2, ensure_ascii=False, default=str))
+    # 2. Если напрямую не получилось, пробуем извлечь из run_config
+    if session_meta is None:
+        run_config = getattr(inv, "run_config", None)
+        possible_sources: list[Dict[str, Any]] = []
 
-    except Exception as e:
-        print(f"Error inspecting _invocation_context: {e}")
+        if run_config is not None:
+            for attr_name in ("inputs", "extra_kwargs"):
+                attr_value = getattr(run_config, attr_name, None)
+                if isinstance(attr_value, dict):
+                    possible_sources.append(attr_value)
 
-    print(">>> END DEBUG _invocation_context")
+            # run_config — это pydantic-модель, поэтому можно безопасно получить dict
+            try:
+                rc_dump = run_config.model_dump(exclude_none=True)
+                if isinstance(rc_dump, dict):
+                    possible_sources.append(rc_dump)
+            except Exception as exc:
+                logger.debug("before_agent: failed to dump run_config: %s", exc)
+
+        for source in possible_sources:
+            if "sessionMetadata" in source:
+                session_meta = source["sessionMetadata"]
+                break
+            inputs_candidate = source.get("inputs")
+            if isinstance(inputs_candidate, dict) and "sessionMetadata" in inputs_candidate:
+                session_meta = inputs_candidate["sessionMetadata"]
+                break
+
+    if session_meta:
+        callback_context.state["session_metadata"] = session_meta
+        logger.debug("before_agent: session metadata stored: %s", session_meta)
+    else:
+        try:
+            dump = inv.model_dump(exclude_none=True)
+            run_config_dump = dump.get("run_config") if isinstance(dump, dict) else None
+        except Exception as exc:
+            dump = {"error": f"failed to dump invocation context: {exc}"}
+            run_config_dump = None
+
+        if isinstance(run_config_dump, dict):
+            logger.debug(
+                "before_agent: run_config dump keys=%s",
+                list(run_config_dump.keys()),
+            )
+            nested_inputs = run_config_dump.get("inputs")
+            if nested_inputs:
+                logger.debug("before_agent: run_config.inputs=%s", nested_inputs)
+            extra_kwargs = run_config_dump.get("extra_kwargs")
+            if extra_kwargs:
+                logger.debug(
+                    "before_agent: run_config.extra_kwargs=%s", extra_kwargs
+                )
+
+        logger.debug(
+            "before_agent: session metadata not found; invocation dump keys=%s",
+            list(dump.keys()) if isinstance(dump, dict) else dump,
+        )
