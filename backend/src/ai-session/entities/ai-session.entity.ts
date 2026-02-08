@@ -1,3 +1,4 @@
+import { LeadEntity } from 'src/lead/entities/lead.entity';
 import { MessageEntity } from 'src/message/entities/message.entity';
 import {
   Column,
@@ -5,6 +6,7 @@ import {
   DeleteDateColumn,
   Entity,
   OneToMany,
+  OneToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -30,6 +32,13 @@ export class AiSessionEntity {
     cascade: true,
   })
   messages: MessageEntity[];
+
+  // relations
+  @OneToOne(() => LeadEntity, (lead) => lead.aiSession, {
+    onDelete: 'CASCADE',
+    nullable: true,
+  })
+  lead: LeadEntity;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

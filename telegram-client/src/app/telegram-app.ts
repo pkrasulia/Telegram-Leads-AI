@@ -14,6 +14,7 @@ export class TelegramApp {
   private readonly authService: AuthService;
   private readonly chatService: ChatService;
   private assistantEnabled: boolean;
+  private businessOwners: Map<string, number> = new Map();
 
   constructor() {
     this.telegramService = new TelegramService();
@@ -41,6 +42,12 @@ export class TelegramApp {
         connectionId: connection.id,
         status: connection.status,
       });
+      // Store business owner ID for this connection
+      if (connection.status === "active") {
+        this.businessOwners.set(connection.id, connection.user.id);
+      } else {
+        this.businessOwners.delete(connection.id);
+      }
     });
 
     // Business message handler
@@ -155,11 +162,15 @@ export class TelegramApp {
     const businessConnectionId = msg.business_connection_id;
     const userName = formatUserName(msg.from?.first_name, msg.from?.last_name);
 
+    console.log(msg);
+
     // Save incoming message
     await this.messageStorageService.saveIncomingMessage(msg, true, businessConnectionId);
 
     mainLogger.info("Business message received", {
       chatId,
+      chatType: msg.chat.type,
+      fromId: msg.from?.id,
       messageText: getTextPreview(messageText),
       userName,
       businessConnectionId,
@@ -173,7 +184,27 @@ export class TelegramApp {
       return;
     }
 
-    await this.processMessage(chatId, messageText, userName, businessConnectionId);
+    // Determine direction: if sender is business owner, it's outgoing
+    // Heuristic: in private business chats, if from.id != chat.id, it's the account owner (support)
+    const ownerId = this.businessOwners.get(businessConnectionId);
+    let direction: "incoming" | "outgoing";
+
+    if (msg.chat.type === "private") {
+      direction = msg.from?.id === msg.chat.id ? "incoming" : "outgoing";
+    } else {
+      direction = msg.from?.id === ownerId ? "outgoing" : "incoming";
+    }
+
+    if (direction === "outgoing") {
+      mainLogger.info("Business message is from support agent or bot (outgoing), skipping AI", {
+        chatId,
+        fromId: msg.from?.id,
+        chatId_val: msg.chat.id,
+        ownerId,
+      });
+    }
+
+    await this.processMessage(chatId, messageText, userName, businessConnectionId, direction);
   }
 
   /**
@@ -205,14 +236,23 @@ export class TelegramApp {
    * @param messageText - Message text
    * @param userName - User name
    * @param businessConnectionId - Business connection ID (optional)
+   * @param direction - Message direction (incoming/outgoing)
    */
-  private async processMessage(chatId: number, messageText: string, userName: string, businessConnectionId?: string): Promise<void> {
+  private async processMessage(
+    chatId: number,
+    messageText: string,
+    userName: string,
+    businessConnectionId?: string,
+    direction: "incoming" | "outgoing" = "incoming",
+  ): Promise<void> {
     try {
       // Get or create chat session
       const session = await this.chatService.getOrCreateUserSession(chatId, userName);
       if (!session) {
         mainLogger.error("Failed to get chat session", { chatId, userName });
-        await this.sendFallbackResponse(chatId, businessConnectionId);
+        if (direction === "incoming") {
+          await this.sendFallbackResponse(chatId, businessConnectionId);
+        }
         return;
       }
 
@@ -222,7 +262,13 @@ export class TelegramApp {
         chatId: chatId.toString(),
         userName,
         businessConnectionId,
+        direction,
       });
+
+      // If it's an outgoing message, we just saved it and don't expect an AI response
+      if (direction === "outgoing") {
+        return;
+      }
 
       let responseText: string;
       if (response && response.aiResponse) {
@@ -312,7 +358,7 @@ Send any message to test functionality
    */
   private async handleSessionsCommand(msg: Message): Promise<void> {
     const chatId = msg.chat.id;
-    
+
     try {
       const session = await this.chatService.getOrCreateUserSession(chatId, "User");
 
@@ -382,10 +428,10 @@ Send any message to test functionality
    */
   private async handleMigrateCommand(msg: Message): Promise<void> {
     const chatId = msg.chat.id;
-    
+
     try {
       const session = await this.chatService.getOrCreateUserSession(chatId, "User");
-      
+
       if (session) {
         this.telegramService.sendMessage(chatId, `✅ Session is already using the Chat API! Session ID: ${session.id}`);
       } else {

@@ -82,10 +82,10 @@ export class AiGatewayService {
         responseData: error?.response?.data,
         config: error?.config
           ? {
-              url: error.config.url,
-              method: error.config.method,
-              baseURL: error.config.baseURL,
-            }
+            url: error.config.url,
+            method: error.config.method,
+            baseURL: error.config.baseURL,
+          }
           : undefined,
       });
 
@@ -114,6 +114,9 @@ export class AiGatewayService {
    * @param sessionId - ID сессии (опционально)
    * @returns объект с ответом, sessionId и флагом wasNewSessionCreated
    */
+  /**
+   * Отправляет сообщение в ADK
+   */
   private async sendMessageToAdk(
     message: string,
     userId?: string,
@@ -129,6 +132,7 @@ export class AiGatewayService {
         message: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
         userId,
         sessionId,
+        userName,
       });
 
       // Обрабатываем userId - если уже в формате tg_user_, используем как есть
@@ -145,6 +149,8 @@ export class AiGatewayService {
 
       // Если нет sessionId или это не UUID, создаем новую сессию
       let targetSessionId: string | undefined = sessionId;
+      let wasNewSessionCreated = false;
+
       if (!targetSessionId || (sessionId && !this.isValidUUID(sessionId))) {
         // Создаем новую ADK-сессию (нет или неверный формат sessionId)
         const newSessionId = await this.createAdkSession(targetUserId);
@@ -152,41 +158,51 @@ export class AiGatewayService {
           throw new Error('Failed to create ADK session');
         }
         targetSessionId = newSessionId;
+        wasNewSessionCreated = true;
+
+        this.logger.log('New session created', {
+          sessionId: targetSessionId,
+          userId: targetUserId,
+        });
       }
 
+      // 🎯 ИСПРАВЛЕННЫЙ payload - ТЕПЕРЬ camelCase и stateDelta согласно схеме google-adk
       const payload = {
         appName: this.appName,
         userId: targetUserId,
-        userName: userName,
         sessionId: targetSessionId,
         newMessage: {
           role: 'user',
-          parts: [
-            {
-              text: message,
-            },
-          ],
+          parts: [{ text: message }],
         },
         streaming: false,
+        stateDelta: {
+          // 👇 ДОБАВЛЯЕМ ID ЯВНО СЮДА
+          adk_session_id: targetSessionId,
+          adk_user_id: targetUserId,
+
+          // Ваши остальные поля
+          telegram_chat_id: userId || 'test_chat_123',
+          telegram_username: userName || 'test_user',
+          telegram_first_name: 'Test',
+          telegram_last_name: 'User',
+          timestamp: new Date().toISOString(),
+        },
       };
 
+      console.log('>>>> PAYLOAD');
+      console.log(payload);
+
       this.logger.debug('ADK payload prepared', {
-        payload: {
-          ...payload,
-          newMessage: {
-            ...payload.newMessage,
-            parts: payload.newMessage.parts.map((part) => ({
-              ...part,
-              text:
-                part.text.substring(0, 100) +
-                (part.text.length > 100 ? '...' : ''),
-            })),
-          },
-        },
+        appName: payload.appName,
+        userId: payload.userId,
+        sessionId: payload.sessionId,
+        messagePreview:
+          message.substring(0, 100) + (message.length > 100 ? '...' : ''),
+        stateDelta: payload.stateDelta,
       });
 
       let response;
-      let wasNewSessionCreated = false; // Флаг, что была создана новая сессия
       try {
         response = await this.adkClient.post('/run', payload);
         this.logger.debug('ADK request sent successfully');
@@ -200,18 +216,25 @@ export class AiGatewayService {
             userId: targetUserId,
             oldSessionId: targetSessionId,
           });
-          const newSessionRes = await this.adkClient.post(
-            `/apps/${this.appName}/users/${targetUserId}/sessions`,
-          );
-          const newSessionId =
-            newSessionRes.data.session_id || newSessionRes.data.id;
+
+          // Создаем новую сессию
+          const newSessionId = await this.createAdkSession(targetUserId);
+          if (!newSessionId) {
+            throw new Error('Failed to create ADK session after 404');
+          }
+
           targetSessionId = newSessionId;
-          wasNewSessionCreated = true; // Устанавливаем флаг
-          this.logger.log('New session created', {
+          wasNewSessionCreated = true;
+
+          this.logger.log('New session created after 404', {
             sessionId: targetSessionId,
             oldSessionId: sessionId,
           });
+
+          // Обновляем payload с новым sessionId
           payload.sessionId = newSessionId;
+
+          // Повторяем запрос
           response = await this.adkClient.post('/run', payload);
         } else {
           throw error;
@@ -222,7 +245,7 @@ export class AiGatewayService {
       this.logger.debug('ADK response received', {
         responseType: typeof responseData,
         isArray: Array.isArray(responseData),
-        responseData: responseData,
+        dataLength: Array.isArray(responseData) ? responseData.length : 0,
       });
 
       let aiResponse = 'Sorry, no response received from system';
@@ -231,20 +254,33 @@ export class AiGatewayService {
         this.logger.debug('Processing array response', {
           arrayLength: responseData.length,
         });
-        for (const item of responseData) {
-          if (item?.content?.parts) {
-            const textPart = item.content.parts.find((part: any) => part.text);
+
+        // Ищем последнее сообщение от модели с текстом
+        for (let i = responseData.length - 1; i >= 0; i--) {
+          const item = responseData[i];
+
+          // Проверяем content.parts
+          if (item?.content?.parts && Array.isArray(item.content.parts)) {
+            const textPart = item.content.parts.find(
+              (part: any) => part.text && typeof part.text === 'string',
+            );
+
             if (textPart?.text) {
               aiResponse = textPart.text;
               this.logger.debug('Found text in content.parts', {
                 text: textPart.text.substring(0, 100),
+                itemIndex: i,
               });
               break;
             }
-          } else if (item?.text) {
+          }
+
+          // Fallback на item.text
+          if (item?.text && typeof item.text === 'string') {
             aiResponse = item.text;
             this.logger.debug('Found text in item', {
               text: item.text.substring(0, 100),
+              itemIndex: i,
             });
             break;
           }
@@ -265,7 +301,9 @@ export class AiGatewayService {
           content: responseData.content.substring(0, 100),
         });
       } else {
-        this.logger.warn('Unknown response format', { responseData });
+        this.logger.warn('Unknown response format', {
+          responseData: JSON.stringify(responseData).substring(0, 200),
+        });
       }
 
       // Гарантируем, что targetSessionId определен
@@ -283,8 +321,8 @@ export class AiGatewayService {
 
       return {
         response: aiResponse,
-        sessionId: targetSessionId, // Возвращаем sessionId (может быть новый, если была создана новая сессия)
-        wasNewSessionCreated: wasNewSessionCreated, // Возвращаем флаг
+        sessionId: targetSessionId,
+        wasNewSessionCreated: wasNewSessionCreated,
       };
     } catch (error: any) {
       this.logger.error('Error sending message to ADK', {
@@ -293,10 +331,10 @@ export class AiGatewayService {
         responseData: error?.response?.data,
         config: error?.config
           ? {
-              url: error.config.url,
-              method: error.config.method,
-              baseURL: error.config.baseURL,
-            }
+            url: error.config.url,
+            method: error.config.method,
+            baseURL: error.config.baseURL,
+          }
           : undefined,
         stack: error?.stack,
       });

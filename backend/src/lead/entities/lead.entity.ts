@@ -4,42 +4,42 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
+  OneToOne,
+  JoinColumn,
 } from 'typeorm';
 import { LeadStatus, LeadSource } from '../dto/create-lead.dto';
+import { AiSessionEntity } from 'src/ai-session/entities/ai-session.entity';
 
 @Entity('leads')
-export class Lead {
-  @PrimaryGeneratedColumn()
-  id: number;
+export class LeadEntity {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
 
-  @Column({ type: 'varchar', length: 255 })
+  @Column({ type: 'text' })
   name: string;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'citext', nullable: true })
   email?: string;
 
-  @Column({ type: 'varchar', length: 50, nullable: true })
+  @Column({ type: 'varchar', length: 20, nullable: true })
   phone?: string;
 
-  @Column({
-    type: 'varchar',
-    length: 100,
-    nullable: true,
-    name: 'telegram_username',
-  })
-  telegramUsername?: string;
-
-  @Column({ type: 'varchar', length: 100, nullable: true, name: 'telegram_id' })
-  telegramId?: string;
-
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'text', nullable: true })
   company?: string;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'text', nullable: true })
   position?: string;
 
   @Column({ type: 'text', nullable: true })
   notes?: string;
+
+  @OneToOne(() => AiSessionEntity, (session) => session.lead, {
+    eager: false,
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'ai_session_id' })
+  aiSession: AiSessionEntity;
 
   @Column({
     type: 'enum',
@@ -60,4 +60,7 @@ export class Lead {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
+  deletedAt?: Date | null;
 }

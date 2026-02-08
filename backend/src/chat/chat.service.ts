@@ -23,7 +23,7 @@ export class ChatService {
     private readonly aiSessionService: AiSessionService,
     private readonly messageService: MessageService,
     private readonly aiGatewayService: AiGatewayService,
-  ) {}
+  ) { }
 
   /**
    * Создать новую сессию чата
@@ -160,8 +160,21 @@ export class ChatService {
     userMessage.session = session;
     await this.messageRepository.save(userMessage);
 
-    // Отправляем запрос в AI Gateway для получения ответа
+    // Отправляем запрос в AI Gateway для получения ответа ТОЛЬКО для входящих сообщений
     let aiResponse: { message: MessageEntity; aiResult: any } | null = null;
+
+    const isOutgoing =
+      sendMessageDto.direction === MessageDirection.OUTGOING ||
+      userMessage.direction === MessageDirection.OUTGOING;
+
+    if (isOutgoing) {
+      console.log('Skipping AI response for outgoing message');
+      return {
+        message: userMessage,
+        aiResponse: null,
+      };
+    }
+
     try {
       const aiResult = await this.aiGatewayService.create({
         text: sendMessageDto.text,

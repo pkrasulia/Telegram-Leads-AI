@@ -62,7 +62,7 @@ def _normalize_phone(phone: str) -> str:
         digits = '7' + digits[1:]
     return '+' + digits
 
-def send_lead_to_backend(lead_data: dict) -> dict:
+def send_lead_to_backend(lead_data: dict, tool_context: ToolContext) -> dict:
     """
     Sends a lead to the backend API with validation and retry logic.
 
@@ -92,24 +92,35 @@ def send_lead_to_backend(lead_data: dict) -> dict:
         position = lead_data.get('position', '').strip() if lead_data.get('position') else None
         notes = lead_data.get('notes', '').strip() if lead_data.get('notes') else None
         
-        # Validate required fields
-        if not _validate_name(name):
-            return {"status": "error", "message": "Invalid name format"}
+        # Validate provided fields
+        if name and not _validate_name(name):
+            return {"status": "error", "message": f"Invalid name format: {name}"}
         
-        if not _validate_phone(phone):
-            return {"status": "error", "message": "Invalid phone number format"}
+        if phone and not _validate_phone(phone):
+            return {"status": "error", "message": f"Invalid phone number format: {phone}"}
         
         # Validate optional email
         if email and not _validate_email(email):
-            return {"status": "error", "message": "Invalid email format"}
+            return {"status": "error", "message": f"Invalid email format: {email}"}
+
+        # At least something should be provided
+        if not any([name, phone, email, company, position, notes]):
+            return {"status": "error", "message": "No lead information provided"}
+        
+        # Get session ID from ADK state
+        adk_session_id = tool_context.state.get('adk_session_id')
         
         # Prepare data for backend API
         api_data = {
-            'name': name,
-            'phone': _normalize_phone(phone),
             'status': 'new',
-            'source': 'telegram'
+            'source': 'telegram',
+            'adkSessionId': adk_session_id
         }
+        
+        if name:
+            api_data['name'] = name
+        if phone:
+            api_data['phone'] = _normalize_phone(phone)
         
         # Add optional fields if provided
         if email:

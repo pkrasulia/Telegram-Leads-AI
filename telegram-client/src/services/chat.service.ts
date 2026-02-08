@@ -120,8 +120,8 @@ export class ChatService extends BaseService {
           sessionId,
           text,
           type: "text",
-          direction: "incoming",
-          isBot: false,
+          direction: metadata.direction || "incoming",
+          isBot: metadata.isBot || false,
           metadata: {
             source: "telegram",
             ...metadata,

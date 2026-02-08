@@ -1,10 +1,4 @@
-import {
-  IsString,
-  IsEmail,
-  IsOptional,
-  IsPhoneNumber,
-  IsEnum,
-} from 'class-validator';
+import { IsString, IsEmail, IsOptional, IsEnum } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export enum LeadStatus {
@@ -38,16 +32,6 @@ export class CreateLeadDto {
   @IsString()
   phone?: string;
 
-  @ApiProperty({ description: 'Telegram username', required: false })
-  @IsOptional()
-  @IsString()
-  telegramUsername?: string;
-
-  @ApiProperty({ description: 'Telegram ID', required: false })
-  @IsOptional()
-  @IsString()
-  telegramId?: string;
-
   @ApiProperty({ description: 'Компания лида', required: false })
   @IsOptional()
   @IsString()
@@ -80,4 +64,9 @@ export class CreateLeadDto {
   @IsOptional()
   @IsEnum(LeadSource)
   source?: LeadSource;
+
+  @ApiProperty({ description: 'ADK Session ID', required: false })
+  @IsOptional()
+  @IsString()
+  adkSessionId?: string;
 }

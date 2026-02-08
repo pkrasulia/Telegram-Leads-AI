@@ -27,7 +27,7 @@ class AgentModel(BaseModel):
     """Agent model settings."""
 
     name: str = Field(default="telegram_customer_service_agent")
-    model: str = Field(default="gemini-2.0-flash-001")
+    model: str = Field(default="gemini-flash-latest")
 
 
 class Config(BaseSettings):
